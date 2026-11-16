@@ -2,6 +2,7 @@ import { loadCharacters } from "./character-storage";
 import { loadChatContacts } from "./chat-storage";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import type { Character } from "./character-types";
+import { knowledgeKey, renderKnownCharacter, type KnowledgeRule } from "./character-knowledge";
 import type { MomentComment, MomentLike, MomentPost } from "./moments-types";
 
 const CHARACTER_WORLDS_KEY = "ai_phone_character_worlds_v1";
@@ -23,6 +24,7 @@ export type CharacterWorldGroup = {
     description: string;
     memberIds: string[];
     relations: CharacterWorldRelation[];
+    knowledgeRules?: Record<string, KnowledgeRule>;
     createdAt: string;
     updatedAt: string;
 };
@@ -108,6 +110,7 @@ function normalizeGroups(groups: CharacterWorldGroup[], characters: Character[])
                 description: typeof group.description === "string" ? group.description.trim() : "",
                 memberIds: members,
                 relations,
+                knowledgeRules: group.knowledgeRules && typeof group.knowledgeRules === "object" ? group.knowledgeRules : undefined,
                 createdAt: group.createdAt || now,
                 updatedAt: group.updatedAt || now,
             };
@@ -321,7 +324,13 @@ export function getVisibleMomentLikesForCharacter(post: MomentPost, viewerCharac
     });
 }
 
-export function formatCharacterRelationsForPrompt(characterId: string): string {
+export function updateCharacterKnowledgeRule(groupId: string, viewerId: string, subjectId: string, rule: KnowledgeRule): void {
+    saveCharacterWorldGroups(loadCharacterWorldGroups().map(group => group.id === groupId
+        ? { ...group, knowledgeRules: { ...group.knowledgeRules, [knowledgeKey(viewerId, subjectId)]: rule }, updatedAt: new Date().toISOString() }
+        : group));
+}
+
+export function formatCharacterRelationsForPrompt(characterId: string, activationContext = ""): string {
     const groups = loadCharacterWorldGroups();
     const group = groups.find(item => item.memberIds.includes(characterId)) ?? null;
     if (!group) return "";
@@ -369,14 +378,15 @@ export function formatCharacterRelationsForPrompt(characterId: string): string {
     const briefLines: string[] = [];
     for (const counterpartId of counterpartIds) {
         const counterpart = characterById.get(counterpartId);
-        const brief = counterpart?.briefPersona?.trim();
+        const brief = counterpart ? renderKnownCharacter(counterpart, group.knowledgeRules?.[knowledgeKey(characterId, counterpartId)], activationContext) : "";
         if (!counterpart || !brief) continue;
         briefLines.push(`- ${counterpart.name}：${brief}`);
     }
     if (briefLines.length > 0) {
-        lines.push("与你有关系的角色简介（供你在提及、转述或与其互动时保持其人设一致）：");
+        lines.push("与你有关系的人物资料（由用户选择资料范围和触发条件；完整背景可能包含未公开信息）：");
         lines.push(...briefLines);
     }
 
     return lines.join("\n");
 }
+

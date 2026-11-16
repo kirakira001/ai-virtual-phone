@@ -28,6 +28,39 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 assert.equal(compiled.diagnostics.length, 0);
 vm.runInNewContext(compiled.outputText, { exports: exportsObject, require: name => { assert.ok(mocks[name], name); return mocks[name]; } });
 const lab = exportsObject;
+const knowledge = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync("lib/character-knowledge.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: knowledge });
+const subject = { id: "peer", name: "B", persona: "完整背景及秘密", personality: "耐心", briefPersona: "公开简介" };
+assert.equal(knowledge.renderKnownCharacter(subject, undefined, ""), "公开简介");
+assert.match(knowledge.renderKnownCharacter(subject, { mode: "full" }, ""), /完整背景及秘密/);
+assert.equal(knowledge.renderKnownCharacter(subject, { mode: "custom", customText: "A只知道B是医生" }, ""), "A只知道B是医生");
+assert.equal(knowledge.renderKnownCharacter(subject, { trigger: "off", mode: "full" }, ""), "");
+assert.equal(knowledge.renderKnownCharacter(subject, { trigger: "keywords", keywords: "医院,Doctor" }, "今天遇到DOCTOR"), "公开简介");
+assert.equal(knowledge.renderKnownCharacter(subject, { trigger: "keywords", keywords: "医院" }, "聊音乐"), "");
+assert.equal(knowledge.renderKnownCharacter(subject, { trigger: "keywords", keywords: "" }, ""), "");
+assert.notEqual(knowledge.knowledgeKey("A", "B"), knowledge.knowledgeKey("B", "A"));
+// Exercise real world storage normalization and prompt formatting with in-memory persistence.
+const storedWorlds = new Map();
+const worldExports = {};
+const worldMocks = {
+  "./character-knowledge": knowledge,
+  "./character-storage": { loadCharacters: () => [{ ...subject, id: "A" }, subject] },
+  "./chat-storage": { loadChatContacts: () => [] },
+  "./kv-db": { registerKvMigration: () => {}, kvGet: key => storedWorlds.get(key) || null, kvSet: (key, value) => storedWorlds.set(key, value) },
+};
+const worldSource = ts.transpileModule(fs.readFileSync("lib/character-world-storage.ts", "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+vm.runInNewContext(worldSource, { exports: worldExports, require: key => { assert.ok(worldMocks[key], key); return worldMocks[key]; }, window: { dispatchEvent: () => {} }, CustomEvent: class {} });
+const world = worldExports.createCharacterWorldGroup("测试世界");
+worldExports.moveCharacterToWorld("A", world.id);
+worldExports.moveCharacterToWorld("peer", world.id);
+worldExports.addCharacterWorldRelation(world.id, "A", "peer", "同事");
+worldExports.updateCharacterKnowledgeRule(world.id, "A", "peer", { ...knowledge.DEFAULT_KNOWLEDGE_RULE, mode: "full", trigger: "keywords", keywords: "医院" });
+assert.equal(worldExports.loadCharacterWorldGroups().find(item => item.id === world.id).knowledgeRules[knowledge.knowledgeKey("A", "peer")].mode, "full");
+assert.doesNotMatch(worldExports.formatCharacterRelationsForPrompt("A", "音乐"), /完整背景及秘密/);
+assert.match(worldExports.formatCharacterRelationsForPrompt("A", "医院"), /完整背景及秘密/);
+worldExports.updateCharacterKnowledgeRule(world.id, "A", "peer", { ...knowledge.DEFAULT_KNOWLEDGE_RULE, mode: "custom", customText: "只知道职业" });
+assert.match(worldExports.formatCharacterRelationsForPrompt("A", ""), /只知道职业/);
+assert.doesNotMatch(worldExports.formatCharacterRelationsForPrompt("A", ""), /完整背景及秘密/);
 const draft = { name: "甲", background: "背景", world: "世界A", worldDescription: "世界说明", role: "npc" };
 
 (async () => {
@@ -63,10 +96,10 @@ const draft = { name: "甲", background: "背景", world: "世界A", worldDescri
   const result = await lab.extractCharacterDrafts("资料", "test-api");
   assert.equal(result[0].name, "甲");
   assert.equal(request[1][1].content, "资料");
-  for (const file of ["components/phone-character-app.tsx", "components/character/bulk-import-sheet.tsx"]) {
+  for (const file of ["components/phone-character-app.tsx", "components/character/bulk-import-sheet.tsx", "components/character/relation-dialogs.tsx", "lib/llm-prompt-assembler.ts", "lib/character-world-storage.ts"]) {
     const check = ts.transpileModule(fs.readFileSync(file, "utf8"), { fileName: file, reportDiagnostics: true, compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } });
     assert.equal(check.diagnostics.length, 0, file);
   }
-  console.log("PASS: background merge, identity retention, parsing, preview isolation, duplicate protection, world assignment, API errors/truncation, TSX syntax");
+  console.log("PASS: character import, role identity, directional knowledge, full/custom/brief modes, keyword/off triggers, real storage normalization and prompt formatting, TSX syntax");
 })().catch(error => { console.error(error); process.exitCode = 1; });
 

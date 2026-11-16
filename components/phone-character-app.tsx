@@ -30,6 +30,7 @@ import {
   moveCharacterToWorld,
   renameCharacterWorldGroup,
   updateCharacterWorldDescription,
+  updateCharacterKnowledgeRule,
   CHARACTER_WORLDS_UPDATED_EVENT,
   DEFAULT_CHARACTER_WORLD_ID,
   type CharacterWorldGroup,
@@ -1445,6 +1446,8 @@ function CharListView({
             || (r.fromCharacterId === pairSheet.bId && r.toCharacterId === pairSheet.aId)
           )}
           nameById={nameById}
+          knowledgeRules={currentGroup.knowledgeRules}
+          onKnowledgeChange={(viewerId, subjectId, rule) => updateCharacterKnowledgeRule(currentGroup.id, viewerId, subjectId, rule)}
           onDelete={relationId => deleteCharacterWorldRelation(currentGroup.id, relationId)}
           onClose={() => setPairSheet(null)}
         />

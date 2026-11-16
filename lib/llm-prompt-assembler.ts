@@ -409,6 +409,7 @@ function getMarkerContent(
     regexCtx?: RegexContext,
     characterRelations?: string,
     dwellingContext?: string,
+    relationActivationContext = "",
 ): string | null {
     switch (identifier) {
         case "charDescription":
@@ -434,7 +435,7 @@ function getMarkerContent(
         case "memoryLongTerm":
             return longTermMemories?.trim() || null;
         case "characterRelations": {
-            const relations = characterRelations?.trim() || formatCharacterRelationsForPrompt(character.id).trim();
+            const relations = characterRelations?.trim() || formatCharacterRelationsForPrompt(character.id, relationActivationContext).trim();
             return relations || null;
         }
         case "dwellingContext": {
@@ -769,6 +770,7 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
                     regexes, { macroEngine: engine, activeTags },
                     input.characterRelations,
                     input.dwellingContext,
+                    history.slice(-6).map(message => message.content || "").join("\n"),
                 );
                 if (markerContent) {
                     // Expand macros in marker content ({{char}}/{{user}} in char descriptions etc.)
@@ -1920,6 +1922,8 @@ export function assembleGroupPromptPayload(input: GroupAssemblerInput): LLMMessa
                     m.longTermMemories,
                     regexes, { macroEngine: engine, activeTags },
                     m.characterRelations,
+                    undefined,
+                    history.slice(-6).map(message => message.content || "").join("\n"),
                 );
                 if (markerContent) {
                     markerContent = engine.expand(markerContent);
@@ -2358,3 +2362,4 @@ export function applyEditOutputRegex(text: string, regexGroups: RegexConfig[], c
 export function applyEditRegex(text: string, regexGroups: RegexConfig[], placement: 1 | 2 | 5 | 6 = 2, ctx?: RegexContext): string {
     return applyRegex(text, regexGroups, placement, { ...ctx, isEdit: true });
 }
+
