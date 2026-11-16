@@ -7,6 +7,11 @@ out/
 *.log
 .env.local
 .env
+.env.*
+!.env.example
+.vercel/
+*.pem
+*.key
 data/activation-codes.json
 SillyTavern/
 .codex
@@ -28,3 +33,4 @@ tools/weixin-local-assistant/config.txt
 *.ts.net.crt
 *.ts.net.key
 /public/models/world-builder/
+

@@ -17,6 +17,8 @@ import {
   CHAR_BLOCKED_FIELDS,
 } from "@/lib/character-storage";
 import { generateBriefPersonaText, isBriefPersonaStale } from "@/lib/brief-persona";
+import { characterBackground, roleTags } from "@/lib/character-lab";
+import { BulkImportSheet } from "@/components/character/bulk-import-sheet";
 import { generateSupportingCharacters, materializeSupportingCharacter, type GeneratedSupportingCharacter } from "@/lib/npc-generator";
 import {
   addCharacterWorldRelation,
@@ -471,6 +473,7 @@ function CharListView({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [showNpcGen, setShowNpcGen] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [activeMoveChar, setActiveMoveChar] = useState<Character | null>(null);
 
   // ── 世界卷宗：当前世界派生数据 ──
@@ -559,13 +562,15 @@ function CharListView({
 
   /** 「生成配角」确认落库（支持一批）：落库逻辑与聊天名片建档共用 lib/npc-generator 的 materialize */
   function handleNpcGenerated(results: GeneratedSupportingCharacter[], targetId: string, allowAutoPost: boolean) {
-    const newChars = results.map((result, index) =>
-      materializeSupportingCharacter(result, targetId, { allowAutoPost, placementIndex: index })
-    );
+    const newChars = results.map((result, index) => {
+      const created = materializeSupportingCharacter({ ...result, persona: characterBackground(result), personality: "" }, targetId, { allowAutoPost, placementIndex: index });
+      if (!targetId) moveCharacterToWorld(created.id, currentWorldId);
+      return created;
+    });
     // materialize 直接写存储；这里回读刷新 React 态（onUpdateChars 会再存一次同数据，无害）
     onUpdateChars(loadCharacters());
     setShowNpcGen(false);
-    onNotice(`已生成配角：${newChars.map(c => `「${c.name}」`).join("")}`);
+    onNotice(`已创建配角：${newChars.map(c => `「${c.name}」`).join("")}`);
   }
 
   useEffect(() => {
@@ -1083,6 +1088,7 @@ function CharListView({
                 <IconPlus />
                 <span>NPC</span>
               </button>
+              <button className="wt-bottom-pill-btn" onClick={() => setShowBulkImport(true)}><IconImport /><span>批量导入</span></button>
               <input
                 ref={fileRef} type="file" accept=".json,.png,image/png,application/json" className="hidden"
                 onChange={async (e) => {
@@ -1379,6 +1385,7 @@ function CharListView({
         />
       )}
 
+      {showBulkImport && <BulkImportSheet worldId={currentWorldId} onClose={() => setShowBulkImport(false)} onImported={() => { onUpdateChars(loadCharacters()); setShowBulkImport(false); onNotice("角色已导入，可编辑背景或切换身份"); }} />}
       {/* NPC generator sheet — 目标角色限当前世界，生成的配角落在当前画布 */}
       {showNpcGen && (
         <NpcGeneratorSheet
@@ -1827,8 +1834,8 @@ function CharArchiveView({
   const [restoreTarget, setRestoreTarget] = useState<CharacterVersion | null>(null);
   const [deleteVersionTarget, setDeleteVersionTarget] = useState<CharacterVersion | null>(null);
   const [name, setName] = useState(char.name || "");
-  const [persona, setPersona] = useState(char.persona || "");
-  const [personality, setPersonality] = useState(char.personality || "");
+  const [persona, setPersona] = useState(characterBackground(char));
+  const [personality, setPersonality] = useState("");
   const [briefPersona, setBriefPersona] = useState(char.briefPersona || "");
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefError, setBriefError] = useState("");
@@ -1865,7 +1872,7 @@ function CharArchiveView({
       const { field, value } = (e as CustomEvent).detail;
       if (field === "name") setName(value);
       else if (field === "persona") setPersona(value);
-      else if (field === "personality") setPersonality(value);
+      else if (field === "personality") setPersona(previous => [previous, `性格：${value}`].filter(Boolean).join("\n\n"));
       else if (field === "timeZone") {
         setTimeZone(value);
         setTimeZoneSearch(value);
@@ -1886,8 +1893,7 @@ function CharArchiveView({
   function isDirty(): boolean {
     if (!isEditing) return false;
     if (name !== (char.name || "")) return true;
-    if (persona !== (char.persona || "")) return true;
-    if (personality !== (char.personality || "")) return true;
+    if (persona !== characterBackground(char)) return true;
     if (briefPersona !== (char.briefPersona || "")) return true;
     if (timeZone !== (char.timeZone || "")) return true;
     if (avatar !== (char.avatar || null)) return true;
@@ -1907,8 +1913,8 @@ function CharArchiveView({
   useEffect(() => {
     if (!isEditing) {
       setName(char.name || "");
-      setPersona(char.persona || "");
-      setPersonality(char.personality || "");
+      setPersona(characterBackground(char));
+      setPersonality("");
       setBriefPersona(char.briefPersona || "");
       setBriefError("");
       setTimeZone(char.timeZone || "");
@@ -2221,13 +2227,13 @@ function CharArchiveView({
         <div className="char-archive-text-section border-b-0">
           <div className="char-log-entry mb-4">
             <div className="char-log-entry-header">
-              <span>PERSONA / TRAITS</span>
+              <span>角色背景</span>
             </div>
             {isEditing ? (
               <AutoResizingTextarea
                 value={persona}
                 onChange={setPersona}
-                placeholder="Describe background, personality..."
+                placeholder="填写角色背景、性格、经历、关系和说话习惯…"
                 minHeight={120}
                 style={{
                   width: "100%", background: "color-mix(in srgb, var(--c-input) 50%, transparent)",
@@ -2240,29 +2246,12 @@ function CharArchiveView({
             )}
           </div>
 
-          {/* Personality — shown when editing or when has content */}
-          {(isEditing || personality.trim()) && (
-            <div className="char-log-entry mb-4 border-t border-dashed border-[#999] pt-3">
-              <div className="char-log-entry-header">
-                <span>PERSONALITY</span>
-              </div>
-              {isEditing ? (
-                <AutoResizingTextarea
-                  value={personality}
-                  onChange={setPersonality}
-                  placeholder="Character personality traits..."
-                  minHeight={60}
-                  style={{
-                    width: "100%", background: "color-mix(in srgb, var(--c-input) 50%, transparent)",
-                    border: "1px dashed #666", padding: 8, fontSize: "calc(12px*var(--app-text-scale,1))", lineHeight: 1.5,
-                    fontFamily: "inherit", marginTop: 8
-                  }}
-                />
-              ) : (
-                <p className="char-archive-p whitespace-pre-wrap break-words">{personality}</p>
-              )}
-            </div>
-          )}
+          <div className="char-log-entry mb-4">
+            <label>角色身份　</label>
+            {isEditing ? <select aria-label="角色身份" value={tags.includes("配角") ? "npc" : "main"} onChange={event => setTags(roleTags(tags, event.target.value as "main" | "npc"))}>
+              <option value="main">主要角色</option><option value="npc">NPC / 配角</option>
+            </select> : <span>{tags.includes("配角") ? "NPC / 配角" : "主要角色"}（编辑可切换，保留聊天和资料）</span>}
+          </div>
 
           {/* 简量人设 — 注入到同世界有关系角色的上下文，防对方 OOC */}
           {(isEditing || briefPersona.trim()) && (
@@ -2880,6 +2869,7 @@ function NpcGeneratorSheet({ characters, onClose, onConfirm }: {
 
         {!results ? (
           <div className="flex flex-col">
+            <button className="wt-btn" disabled={busy} onClick={() => setResults([{ name: "", persona: "", personality: "", briefPersona: "", relationLabel: "", reverseRelationLabel: "" }])}>手动填写 NPC（无需调用 AI）</button>
             <label className="wt-paper-label">为哪位角色生成配角</label>
             <select className="wt-paper-input" value={targetId} onChange={e => setTargetId(e.target.value)}>
               {characters.map(c => (
@@ -2920,7 +2910,7 @@ function NpcGeneratorSheet({ characters, onClose, onConfirm }: {
                 {busy ? "生成中…" : "生成"}
               </button>
             </div>
-            {characters.length === 0 && <p className="wt-paper-hint mt-2">还没有角色，先创建一位主角。</p>}
+            {characters.length === 0 && <p className="wt-paper-hint mt-2">还没有主角，可以直接手动填写 NPC；AI 生成需先创建参考角色。</p>}
           </div>
         ) : (
           <div className="flex flex-col">
@@ -2939,16 +2929,14 @@ function NpcGeneratorSheet({ characters, onClose, onConfirm }: {
                 <label className="wt-paper-label mt-2">名字</label>
                 <input className="wt-paper-input" value={result.name} onChange={e => patchAt(index, { name: e.target.value })} />
 
-                <label className="wt-paper-label mt-2">人设（完整角色卡）</label>
+                <label className="wt-paper-label mt-2">角色背景</label>
                 <textarea
                   className="wt-paper-textarea"
                   style={{ minHeight: 120 }}
-                  value={result.persona}
-                  onChange={e => patchAt(index, { persona: e.target.value })}
+                  value={characterBackground(result)}
+                  onChange={e => patchAt(index, { persona: e.target.value, personality: "" })}
                 />
 
-                <label className="wt-paper-label mt-2">性格</label>
-                <input className="wt-paper-input" value={result.personality} onChange={e => patchAt(index, { personality: e.target.value })} />
 
                 <label className="wt-paper-label mt-2">简量人设（注入给同世界角色）</label>
                 <textarea
@@ -3000,3 +2988,4 @@ function NpcGeneratorSheet({ characters, onClose, onConfirm }: {
     </div>
   );
 }
+
